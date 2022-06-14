@@ -32,8 +32,6 @@
 #include "IfxVadc_reg.h"
 #include "IfxGtm_reg.h"
 
-#include "Button_Interrupt.h"
-
 // Port registers
 #define PC1_BIT_LSB_IDX         11
 #define PC2_BIT_LSB_IDX         19
@@ -62,6 +60,13 @@
 #define EIEN0_BIT_LSB_IDX       11
 #define INP0_BIT_LSB_IDX        12
 #define IGP0_BIT_LSB_IDX        14
+
+#define EXIS1_BIT_LSB_IDX       20
+#define FEN1_BIT_LSB_IDX        24
+#define REN1_BIT_LSB_IDX        25
+#define EIEN1_BIT_LSB_IDX       27
+#define INP1_BIT_LSB_IDX        28
+#define IGP1_BIT_LSB_IDX        30
 
 // SRC registers
 #define SRPN_BIT_LSB_IDX        0
@@ -119,18 +124,16 @@ IfxCpu_syncEvent g_cpuSyncEvent = 0;
 void initLED(void);
 void initButton(void);
 void initERU0(void);
+void initERU2(void);
 void initCCU60(void);
 void initRGBLED(void);
 void initVADC(void);
 void VADC_startConversion(void);
 unsigned int VADC_readResult(void);
 void initGTM(void);
-void initREDLED_PWM(void);
-
 void initUSonic(void);
 void initCCU61(void);
 void usonicTrigger(void);
-
 void initBuzzer(void);
 void initGTM_Buzzer(void);
 
@@ -194,19 +197,16 @@ int core0_main(void)
     IfxCpu_waitEvent(&g_cpuSyncEvent, 1);
     
     /* Initialization */
-    initInterrupt_Button1();
     initERU0();
+    initERU2();
     initCCU60();
     initLED();
     initRGBLED();
     initVADC();
     initGTM();
-    initREDLED_PWM();
     initButton();
-
     initUSonic();
     initCCU61();
-
     initBuzzer();
     initGTM_Buzzer();
 
@@ -259,10 +259,14 @@ int core0_main(void)
 
 void initLED(void)
 {
-//    P10_IOCR0.U &= ~(0x1F << PC1_BIT_LSB_IDX);    // Red LED
+    P10_IOCR0.U &= ~(0x1F << PC1_BIT_LSB_IDX);  // Red LED
     P10_IOCR0.U &= ~(0x1F << PC2_BIT_LSB_IDX);  // Blue LED
 
-//    P10_IOCR0.U |= 0x10 << PC1_BIT_LSB_IDX;
+#if 0
+    P10_IOCR0.U |= 0x10 << PC1_BIT_LSB_IDX; // GPIO
+#else
+    P10_IOCR0.U |= 0x11 << PC1_BIT_LSB_IDX; // PWM
+#endif
     P10_IOCR0.U |= 0x10 << PC2_BIT_LSB_IDX;
 }
 
@@ -296,6 +300,30 @@ void initERU0(void)
     SRC_SCU_SCU_ERU0.U &= ~(0x3 << TOS_BIT_LSB_IDX);
 
     SRC_SCU_SCU_ERU0.U |= 0x1 << SRE_BIT_LSB_IDX;
+}
+
+void initERU2(void)
+{
+    SCU_EICR1.U &= ~(0x7 <<EXIS1_BIT_LSB_IDX);
+    SCU_EICR1.U |= (0x2 << EXIS1_BIT_LSB_IDX);  // ERS2 - Input 2 USonic
+
+    SCU_EICR1.U |= 0x1 << FEN1_BIT_LSB_IDX; // Falling Edge
+    //SCU_EICR1.U |= 0x1 << REN1_BIT_LSB_IDX; // Rising Edge
+
+    SCU_EICR1.U |= 0x1 << EIEN1_BIT_LSB_IDX;
+
+    SCU_EICR1.U &= ~(0x7 << INP1_BIT_LSB_IDX);
+    SCU_EICR1.U |= (0x2 << INP1_BIT_LSB_IDX);
+
+    SCU_IGCR1.U &= ~(0x3 << IGP0_BIT_LSB_IDX);
+    SCU_IGCR1.U |= 0x1 << IGP0_BIT_LSB_IDX;
+
+    SRC_SCU_SCU_ERU2.U &= ~(0xFF << SRPN_BIT_LSB_IDX);
+    SRC_SCU_SCU_ERU2.U |= 0x10 << SRPN_BIT_LSB_IDX;
+
+    SRC_SCU_SCU_ERU2.U &= ~(0x3 << TOS_BIT_LSB_IDX);
+
+    SRC_SCU_SCU_ERU2.U |= 0x1 << SRE_BIT_LSB_IDX;
 }
 
 void initCCU60(void)
@@ -484,13 +512,6 @@ void initGTM(void)
     GTM_TOM0_CH1_SR1.U = 1250 - 1; // duty cycle = 10%
 
     GTM_TOUTSEL6.U &= ~(0x3 << SEL7_BIT_LSB_IDX);
-}
-
-void initREDLED_PWM(void)
-{
-    P10_IOCR0.U &= ~(0x1F << PC1_BIT_LSB_IDX);
-
-    P10_IOCR0.U |= 0x11 << PC1_BIT_LSB_IDX;
 }
 
 void initUSonic(void)
