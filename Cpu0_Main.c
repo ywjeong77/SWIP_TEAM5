@@ -32,6 +32,8 @@
 #include "IfxVadc_reg.h"
 #include "IfxGtm_reg.h"
 
+#include "Button_Interrupt.h"
+
 // Port registers
 #define PC1_BIT_LSB_IDX         11
 #define PC2_BIT_LSB_IDX         19
@@ -44,6 +46,11 @@
 #define P3_BIT_LSB_IDX          3
 #define P5_BIT_LSB_IDX          5
 #define P7_BIT_LSB_IDX          7
+
+#define PC6_BIT_LSB_IDX         19
+#define P6_BIT_LSB_IDX          6
+#define PC4_BIT_LSB_IDX         3
+#define P4_BIT_LSB_IDX          4
 
 // SCU registers
 #define LCK_BIT_LSB_IDX         1
@@ -107,12 +114,11 @@
 #define ENDIS_CTRL3_LSB_IDX     6
 #define OUTEN_CTRL3_LSB_IDX     6
 
-
 IfxCpu_syncEvent g_cpuSyncEvent = 0;
 
 void initLED(void);
 void initButton(void);
-void initERU(void);
+void initERU0(void);
 void initCCU60(void);
 void initRGBLED(void);
 void initVADC(void);
@@ -120,20 +126,56 @@ void VADC_startConversion(void);
 unsigned int VADC_readResult(void);
 void initGTM(void);
 void initREDLED_PWM(void);
+
+void initUSonic(void);
+void initCCU61(void);
+void usonicTrigger(void);
+
 void initBuzzer(void);
 void initGTM_Buzzer(void);
+
+unsigned int range;
+unsigned char range_valid_flag;
 
 __interrupt(0x0A) __vector_table(0)
 void ERU0_ISR(void)
 {
-    P02_OUT.U ^= 0x1 << P3_BIT_LSB_IDX;
+    // USonic Range
+
+    if( (P00_IN.U & (0x1 << P4_BIT_LSB_IDX)) != 0 ) // rising edge of echo
+    {
+        //                   _______
+        // echo     ________|
+        //                  ^
+
+        CCU61_TCTR4.U |= 0x1 << T12RS_BIT_LSB_IDX;
+    }
+    else // falling edge of echo
+    {
+        CCU61_TCTR4.B.T12RR = 0x1; //stop CCU12 T12 counter
+
+        // (1/t_freq) * counter * 1000000 / 58 = centimeter
+        range = ((CCU61_T12.B.T12CV * 1000000 / 48828)) / 58;
+        range_valid_flag = 1;
+
+        CCU61_TCTR4.B.T12RES = 0x1;
+    }
 }
 
-//__interrupt(0x0B) __vector_table(0)
-//void CCU60_T12_ISR(void)
-//{
-//    P10_OUT.U ^= 0x1 << P2_BIT_LSB_IDX;
-//}
+__interrupt(0x0B) __vector_table(0)
+void CCU60_T12_ISR(void)
+{
+    // End of 10us Trigger
+    // GPIO P02.6 --> Low
+    P02_OUT.U &= ~(0x1 << P6_BIT_LSB_IDX);
+}
+
+__interrupt(0x10) __vector_table(0)
+void ERU2_ISR(void)
+{
+    // SW1 interrupt
+    P10_OUT.U ^= 0x1 << P2_BIT_LSB_IDX;
+}
 
 int core0_main(void)
 {
@@ -151,28 +193,65 @@ int core0_main(void)
     IfxCpu_emitEvent(&g_cpuSyncEvent);
     IfxCpu_waitEvent(&g_cpuSyncEvent, 1);
     
-    initERU();
-//    initCCU60();
-//    initLED();
-//    initRGBLED();
+    /* Initialization */
+    initInterrupt_Button1();
+    initERU0();
+    initCCU60();
+    initLED();
+    initRGBLED();
     initVADC();
     initGTM();
     initREDLED_PWM();
-//    initButton();
+    initButton();
+
+    initUSonic();
+    initCCU61();
+
     initBuzzer();
     initGTM_Buzzer();
 
-    GTM_TOM0_TGC0_GLB_CTRL.U |= 0x1 << HOST_TRIG_LSB_IDX;
+    GTM_TOM0_TGC0_GLB_CTRL.U |= 0x1 << HOST_TRIG_LSB_IDX;   // Red LED
 
-    GTM_TOM0_TGC1_GLB_CTRL.U |= 0x1 << HOST_TRIG_LSB_IDX;
+    GTM_TOM0_TGC1_GLB_CTRL.U |= 0x1 << HOST_TRIG_LSB_IDX;   // Buzzer
 
     while(1)
     {
         VADC_startConversion();
         adcResult = VADC_readResult();
 
-        GTM_TOM0_CH1_SR1.U = adcResult * 4;
-        GTM_TOM0_CH11_SR1.U = adcResult * 4;
+        GTM_TOM0_CH1_SR1.U = adcResult * 4; // Red LED
+        GTM_TOM0_CH11_SR1.U = adcResult * 4; // Buzzer Duty
+        //GTM_TOM0_CH11_SR0.U = adcResult * 4; // Buzzer Period
+
+        for(unsigned int i = 0; i<10000000; i++);
+        usonicTrigger();
+        while(range_valid_flag == 0);
+
+        if(range >= 60) // Red
+        {
+           P02_OUT.U |= 0x1 << P7_BIT_LSB_IDX;
+           P10_OUT.U &= ~(0x1 << P5_BIT_LSB_IDX);
+           P10_OUT.U &= ~(0x1 << P3_BIT_LSB_IDX);
+        }
+        else if(range >= 40) // Green
+        {
+            P02_OUT.U &= ~(0x1 << P7_BIT_LSB_IDX);
+            P10_OUT.U |= 0x1 << P5_BIT_LSB_IDX;
+            P10_OUT.U &= ~(0x1 << P3_BIT_LSB_IDX);
+        }
+        else if(range >= 20) // Green
+        {
+            P02_OUT.U &= ~(0x1 << P7_BIT_LSB_IDX);
+            P10_OUT.U &= ~(0x1 << P5_BIT_LSB_IDX);
+            P10_OUT.U |= 0x1 << P3_BIT_LSB_IDX;
+        }
+        else
+        {
+            P02_OUT.U |= 0x1 << P7_BIT_LSB_IDX;
+            P10_OUT.U |= 0x1 << P5_BIT_LSB_IDX;
+            P10_OUT.U |= 0x1 << P3_BIT_LSB_IDX;
+        }
+
     }
 
     return (1);
@@ -180,10 +259,10 @@ int core0_main(void)
 
 void initLED(void)
 {
-    P10_IOCR0.U &= ~(0x1F << PC1_BIT_LSB_IDX);
-    P10_IOCR0.U &= ~(0x1F << PC2_BIT_LSB_IDX);
+//    P10_IOCR0.U &= ~(0x1F << PC1_BIT_LSB_IDX);    // Red LED
+    P10_IOCR0.U &= ~(0x1F << PC2_BIT_LSB_IDX);  // Blue LED
 
-    P10_IOCR0.U |= 0x10 << PC1_BIT_LSB_IDX;
+//    P10_IOCR0.U |= 0x10 << PC1_BIT_LSB_IDX;
     P10_IOCR0.U |= 0x10 << PC2_BIT_LSB_IDX;
 }
 
@@ -193,16 +272,17 @@ void initButton(void)
     P02_IOCR0.U |= 0x02 << PC1_BIT_LSB_IDX;
 }
 
-void initERU(void)
+void initERU0(void)
 {
     SCU_EICR1.U &= ~(0x7 <<EXIS0_BIT_LSB_IDX);
-    SCU_EICR1.U |= (0x1 << EXIS0_BIT_LSB_IDX);
-
-#if 1
-    SCU_EICR1.U |= 0x1 << FEN0_BIT_LSB_IDX; // Falling Edge
+#if 0
+    SCU_EICR1.U |= (0x1 << EXIS0_BIT_LSB_IDX);  // Push button
 #else
-    SCU_EICR1.U |= 0x1 << REN0_BIT_LSB_IDX; // Rising Edge
+    SCU_EICR1.U |= (0x2 << EXIS0_BIT_LSB_IDX);  // ERS2 - Input 2 USonic
 #endif
+
+    SCU_EICR1.U |= 0x1 << FEN0_BIT_LSB_IDX; // Falling Edge
+    SCU_EICR1.U |= 0x1 << REN0_BIT_LSB_IDX; // Rising Edge
     SCU_EICR1.U |= 0x1 << EIEN0_BIT_LSB_IDX;
 
     SCU_EICR1.U &= ~(0x7 << INP0_BIT_LSB_IDX);
@@ -216,7 +296,6 @@ void initERU(void)
     SRC_SCU_SCU_ERU0.U &= ~(0x3 << TOS_BIT_LSB_IDX);
 
     SRC_SCU_SCU_ERU0.U |= 0x1 << SRE_BIT_LSB_IDX;
-
 }
 
 void initCCU60(void)
@@ -239,13 +318,21 @@ void initCCU60(void)
 
     CCU60_TCTR0.U &= ~(0x7 << T12CLK_BIT_LSB_IDX);
     CCU60_TCTR0.U |= (0x2 << T12CLK_BIT_LSB_IDX);
-    CCU60_TCTR0.U |= (0x1 << T12PRE_BIT_LSB_IDX);
+#if 0
+    CCU60_TCTR0.U |= (0x1 << T12PRE_BIT_LSB_IDX); // 12.5MHz / 256
+#endif
 
     CCU60_TCTR0.U &= ~(0x1 << CTM_BIT_LSB_IDX);
 
-    CCU60_T12PR.U = 24414-1; //0.5s
+#if 0
+    CCU60_T12PR.U = 24414 - 1; //0.5s
+#else
+    CCU60_T12PR.U = 125 - 1; // 10us, 1/12.5 = 0.08u
+#endif
 
     CCU60_TCTR4.U |= 0x1 << T12STR_BIT_LSB_IDX;
+
+    CCU60_TCTR2.U |= 0x1; // Single Shot -> only one pulse, not continuous
 
     CCU60_T12.U = 0;
 
@@ -259,7 +346,41 @@ void initCCU60(void)
 
     SRC_CCU6_CCU60_SR0.U &= ~(0x3 << TOS_BIT_LSB_IDX);
 
-    CCU60_TCTR4.U |= 0x1 << T12RS_BIT_LSB_IDX;
+#if 0    // call by usonicTrigger function
+    CCU60_TCTR4.U |= 0x1 << T12RS_BIT_LSB_IDX; // T12 start counting
+#endif
+}
+
+void initCCU61(void)
+{
+    SCU_WDTCPU0_CON0.U  = ((SCU_WDTCPU0_CON0.U ^ 0xFC) & ~(1 << LCK_BIT_LSB_IDX)) | (1 << ENDINIT_BIT_LSB_IDX);
+    while((SCU_WDTCPU0_CON0.U & (1 << LCK_BIT_LSB_IDX)) != 0);
+
+    SCU_WDTCPU0_CON0.U  = ((SCU_WDTCPU0_CON0.U ^ 0xFC) | (1 << LCK_BIT_LSB_IDX)) & ~(1 << ENDINIT_BIT_LSB_IDX);
+    while((SCU_WDTCPU0_CON0.U & (1 << LCK_BIT_LSB_IDX)) == 0);
+
+    CCU61_CLC.U &= ~(1 << DISR_BIT_LSB_IDX);
+
+    SCU_WDTCPU0_CON0.U  = ((SCU_WDTCPU0_CON0.U ^ 0xFC) & ~(1 << LCK_BIT_LSB_IDX)) | (1 << ENDINIT_BIT_LSB_IDX);
+    while((SCU_WDTCPU0_CON0.U & (1 << LCK_BIT_LSB_IDX)) != 0);
+
+    SCU_WDTCPU0_CON0.U  = ((SCU_WDTCPU0_CON0.U ^ 0xFC) | (1 << LCK_BIT_LSB_IDX)) | (1 << ENDINIT_BIT_LSB_IDX);
+    while((SCU_WDTCPU0_CON0.U & (1 << LCK_BIT_LSB_IDX)) == 0);
+
+    while((CCU61_CLC.U & (1 << DISS_BIT_LSB_IDX)) != 0);
+
+    CCU61_TCTR0.U &= ~(0x7 << T12CLK_BIT_LSB_IDX);
+    CCU61_TCTR0.U |= (0x2 << T12CLK_BIT_LSB_IDX);
+
+    CCU61_TCTR0.U |= (0x1 << T12PRE_BIT_LSB_IDX); // 12.5MHz / 256
+
+    CCU61_TCTR0.U &= ~(0x1 << CTM_BIT_LSB_IDX);
+
+    CCU61_T12PR.U = 100000 - 1;
+
+    CCU61_TCTR4.U |= 0x1 << T12STR_BIT_LSB_IDX;
+
+    CCU61_T12.U = 0;
 }
 
 void initRGBLED(void)
@@ -371,6 +492,30 @@ void initREDLED_PWM(void)
 
     P10_IOCR0.U |= 0x11 << PC1_BIT_LSB_IDX;
 }
+
+void initUSonic(void)
+{
+    P02_IOCR4.U &= ~(0x1F << PC6_BIT_LSB_IDX);
+    P00_IOCR4.U &= ~(0x1F << PC4_BIT_LSB_IDX);
+
+    P00_IOCR4.U |= 0x01 << PC4_BIT_LSB_IDX; // Input
+    P02_IOCR4.U |= 0x10 << PC6_BIT_LSB_IDX; // Output
+
+    P02_OUT.U &= ~(0x1 << P6_BIT_LSB_IDX);
+}
+
+void usonicTrigger(void)
+{
+    // start of 10us Trigger pulse
+    P02_OUT.U |= 0x1 << P6_BIT_LSB_IDX;
+
+    range_valid_flag = 0;
+
+    CCU60_TCTR4.U |= 0x1 << T12RS_BIT_LSB_IDX; // T12 start counting
+}
+
+
+
 
 void initGTM_Buzzer(void)
 {
