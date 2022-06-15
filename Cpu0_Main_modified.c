@@ -515,6 +515,7 @@ void initERU6(void)
     SCU_EICR3.U &= ~(0x7 << INP0_BIT_LSB_IDX); // OGU0
 
     SCU_IGCR0.U &= ~(0x3 << IGP0_BIT_LSB_IDX);
+    SCU_IGCR0.U |= 0x1 << IGP0_BIT_LSB_IDX;
 
     SRC_SCU_SCU_ERU0.U &= ~(0xFF << SRPN_BIT_LSB_IDX);
     SRC_SCU_SCU_ERU0.U |= 0x0A << SRPN_BIT_LSB_IDX; // SRPN : 0xA
