@@ -207,12 +207,12 @@ void ERU6_ISR(void)
 
         for(int i = 0 ; i < WINDOW_SIZE ; i++) {
             if ( prev_range[i] == 0 )
-                temp_sum += temp_range / WINDOW_SIZE;
+                temp_sum += temp_range;
             else
-                temp_sum += prev_range[i] / WINDOW_SIZE;
+                temp_sum += prev_range[i];
         }
 
-        range = temp_sum;
+        range = temp_sum / WINDOW_SIZE;
 
         range_valid_flag = 1;
 
@@ -353,6 +353,7 @@ int core0_main(void)
                    adcResult = VADC_readResult();
 
                    GTM_TOM0_CH11_SR1.U = (adcResult / 4) / ((x % 3) + 1); // Buzzer Duty
+                   GTM_TOM0_CH1_SR1.U = adcResult * 4; // Red LED
 
                    usonicTrigger();
 
