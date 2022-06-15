@@ -153,6 +153,7 @@ void initLED(void);
 void initButton(void);
 void initERU0(void);
 void initERU2(void);
+void initERU6(void);
 void initCCU60(void);
 void initRGBLED(void);
 void initVADC(void);
@@ -171,12 +172,14 @@ unsigned char range_valid_flag;
 unsigned char button_pushed_flag;
 
 __interrupt(0x0A) __vector_table(0)
-void ERU0_ISR(void)
+void ERU6_ISR(void)
 {
     static unsigned int prev_range[5] = {0, };
     static unsigned char prev_idx = 0;
 
-    if( P00_IN.B.P4 != 0 ){
+    //if( P00_IN.B.P4 != 0 )
+    if( P11_IN.B.P10 != 0 )
+    {
         CCU61_TCTR4.B.T12RS = 0x1; // set Request CCU61 T12 Counter
     }
     else {
@@ -274,6 +277,13 @@ void CCU60_T12_ISR(void)
     P02_OUT.U &= ~(0x1 << P6_BIT_LSB_IDX);
 }
 
+__interrupt(0x09) __vector_table(0)
+void ERU0_ISR(void)
+{
+    // SW2 interrupt
+    P10_OUT.U ^= 0x1 << P2_BIT_LSB_IDX;
+}
+
 __interrupt(0x10) __vector_table(0)
 void ERU2_ISR(void)
 {
@@ -302,6 +312,7 @@ int core0_main(void)
     /* Initialization */
     initERU0();
     initERU2();
+    initERU6();
     initCCU60();
     initLED();
     initRGBLED();
@@ -449,37 +460,33 @@ void initButton(void)
 
 void initERU0(void)
 {
-    SCU_EICR1.U &= ~(0x7 <<EXIS0_BIT_LSB_IDX);
-#if 0
-    SCU_EICR1.U |= (0x1 << EXIS0_BIT_LSB_IDX);  // Push button
-#else
-    SCU_EICR1.U |= (0x2 << EXIS0_BIT_LSB_IDX);  // ERS2 - Input 2 USonic
-#endif
+   SCU_EICR1.U &= ~(0x7 <<EXIS0_BIT_LSB_IDX);
+   SCU_EICR1.U |= (0x1 << EXIS0_BIT_LSB_IDX);  // Push button
 
-    SCU_EICR1.U |= 0x1 << FEN0_BIT_LSB_IDX; // Falling Edge
-    SCU_EICR1.U |= 0x1 << REN0_BIT_LSB_IDX; // Rising Edge
-    SCU_EICR1.U |= 0x1 << EIEN0_BIT_LSB_IDX;
+   SCU_EICR1.U |= 0x1 << FEN0_BIT_LSB_IDX; // Falling Edge
 
-    SCU_EICR1.U &= ~(0x7 << INP0_BIT_LSB_IDX);
+   SCU_EICR1.U |= 0x1 << EIEN0_BIT_LSB_IDX;
 
-    SCU_IGCR0.U &= ~(0x3 << IGP0_BIT_LSB_IDX);
-    SCU_IGCR0.U |= 0x1 << IGP0_BIT_LSB_IDX;
+   SCU_EICR1.U &= ~(0x7 << INP0_BIT_LSB_IDX); // OGU1
+   SCU_EICR1.U |= 0x1 << INP0_BIT_LSB_IDX;
 
-    SRC_SCU_SCU_ERU0.U &= ~(0xFF << SRPN_BIT_LSB_IDX);
-    SRC_SCU_SCU_ERU0.U |= 0x0A << SRPN_BIT_LSB_IDX;
+   SCU_IGCR0.U &= ~(0x3 << IGP1_BIT_LSB_IDX);
+   SCU_IGCR0.U |= 0x1 << IGP1_BIT_LSB_IDX;
 
-    SRC_SCU_SCU_ERU0.U &= ~(0x3 << TOS_BIT_LSB_IDX);
+   SRC_SCU_SCU_ERU1.U &= ~(0xFF << SRPN_BIT_LSB_IDX);
+   SRC_SCU_SCU_ERU1.U |= 0x08 << SRPN_BIT_LSB_IDX; // SRPN : 0x8
 
-    SRC_SCU_SCU_ERU0.U |= 0x1 << SRE_BIT_LSB_IDX;
+   SRC_SCU_SCU_ERU1.U &= ~(0x3 << TOS_BIT_LSB_IDX);
+
+   SRC_SCU_SCU_ERU1.U |= 0x1 << SRE_BIT_LSB_IDX;
 }
 
 void initERU2(void)
 {
     SCU_EICR1.U &= ~(0x7 <<EXIS1_BIT_LSB_IDX);
-    SCU_EICR1.U |= (0x2 << EXIS1_BIT_LSB_IDX);  // ERS2 - Input 2 USonic
+    SCU_EICR1.U |= (0x2 << EXIS1_BIT_LSB_IDX);
 
     SCU_EICR1.U |= 0x1 << FEN1_BIT_LSB_IDX; // Falling Edge
-    //SCU_EICR1.U |= 0x1 << REN1_BIT_LSB_IDX; // Rising Edge
 
     SCU_EICR1.U |= 0x1 << EIEN1_BIT_LSB_IDX;
 
@@ -495,6 +502,29 @@ void initERU2(void)
     SRC_SCU_SCU_ERU2.U &= ~(0x3 << TOS_BIT_LSB_IDX);
 
     SRC_SCU_SCU_ERU2.U |= 0x1 << SRE_BIT_LSB_IDX;
+}
+
+void initERU6(void)
+{
+    SCU_EICR3.U &= ~(0x7 <<EXIS0_BIT_LSB_IDX);
+
+    SCU_EICR3.U |= (0x3 << EXIS0_BIT_LSB_IDX);  // ERS6 - Input 3 USonic
+
+    SCU_EICR3.U |= 0x1 << FEN0_BIT_LSB_IDX; // Falling Edge
+    SCU_EICR3.U |= 0x1 << REN0_BIT_LSB_IDX; // Rising Edge
+    SCU_EICR3.U |= 0x1 << EIEN0_BIT_LSB_IDX;
+
+    SCU_EICR3.U &= ~(0x7 << INP0_BIT_LSB_IDX); // OGU0
+
+    SCU_IGCR0.U &= ~(0x3 << IGP0_BIT_LSB_IDX);
+    SCU_IGCR0.U |= 0x1 << IGP0_BIT_LSB_IDX;
+
+    SRC_SCU_SCU_ERU0.U &= ~(0xFF << SRPN_BIT_LSB_IDX);
+    SRC_SCU_SCU_ERU0.U |= 0x0A << SRPN_BIT_LSB_IDX; // SRPN : 0xA
+
+    SRC_SCU_SCU_ERU0.U &= ~(0x3 << TOS_BIT_LSB_IDX);
+
+    SRC_SCU_SCU_ERU0.U |= 0x1 << SRE_BIT_LSB_IDX;
 }
 
 void initCCU60(void)
@@ -689,9 +719,11 @@ void initUSonic(void)
 {
     P02_IOCR4.U &= ~(0x1F << PC6_BIT_LSB_IDX);
     P00_IOCR4.U &= ~(0x1F << PC4_BIT_LSB_IDX);
+    P11_IOCR8.B.PC10 &= 0x0;
 
     P00_IOCR4.U |= 0x01 << PC4_BIT_LSB_IDX; // Input
     P02_IOCR4.U |= 0x10 << PC6_BIT_LSB_IDX; // Output
+    P11_IOCR8.B.PC10 |= 0x01;
 
     P02_OUT.U &= ~(0x1 << P6_BIT_LSB_IDX);
 }
