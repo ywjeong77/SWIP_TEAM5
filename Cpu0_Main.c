@@ -119,6 +119,34 @@
 #define ENDIS_CTRL3_LSB_IDX     6
 #define OUTEN_CTRL3_LSB_IDX     6
 
+/* Ultra-sonic sensor pre-processing */
+#define US_THRESHOLD    2000U
+#define US_MIN          2U
+#define US_MAX          4000U
+#define WINDOW_SIZE     3U
+
+// Song
+#define c4 3822 // 261.63Hz 도
+#define d4 3405 // 293.67Hz 레
+#define e4 3034 // 329.63Hz 미
+#define f4 2863 // 349.23Hz 파
+#define g4 2551 // 392.11Hz 솔
+#define g4s 2408 // 415.30Hz 솔#
+#define a4 2273 // 440.11Hz 라
+#define b4 2025 // 493.88Hz 시
+#define c5 1910 // 523.25Hz 도
+#define d5 1703 // 587.33Hz 레
+
+#define d5s 1607 // 584.37Hz 레#
+#define e5 1517 // 659.26Hz 미
+#define f5 1432 // 698.46Hz 파
+#define g5 1276 // 783.99Hz 솔
+#define a5 1136 // 880.11Hz 라
+#define b5 1012 // 987.77Hz 시
+
+int song[] = { e5, d5s, e5, d5s, e5, b4, d5, c5, a4,a4, c4, e4, a4, b4,b4, e4, g4s, b4, c5,c5, e4, e5, d5s, e5, d5s, e5, b4, d5, c5, a4,a4, c4, e4, a4, b4,b4, e4, c5, b4, a4, a4 };
+
+
 IfxCpu_syncEvent g_cpuSyncEvent = 0;
 
 void initLED(void);
@@ -140,9 +168,81 @@ void initGTM_Buzzer(void);
 unsigned int range;
 unsigned char range_valid_flag;
 
+unsigned char button_pushed_flag;
+
 __interrupt(0x0A) __vector_table(0)
 void ERU0_ISR(void)
 {
+    static unsigned int prev_range[5] = {0, };
+    static unsigned char prev_idx = 0;
+
+    if( P00_IN.B.P4 != 0 ){
+        CCU61_TCTR4.B.T12RS = 0x1; // set Request CCU61 T12 Counter
+    }
+    else {
+        CCU61_TCTR4.B.T12RR = 0x1;  // reset Request CCU61 T12 Counter
+
+        unsigned int temp_range = ( ( CCU61_T12.B.T12CV * 1000000 ) / 48828 ) / 58;
+
+        if( temp_range < US_MIN )
+            temp_range = US_MIN;
+        else if(temp_range > US_MAX )
+            temp_range = US_MAX;
+        else if( temp_range > US_THRESHOLD )
+            temp_range = US_THRESHOLD;
+        else {}
+
+
+        if( prev_idx >= WINDOW_SIZE )
+            prev_idx = 0;
+        else
+            prev_idx++;
+
+        prev_range[prev_idx] = temp_range;
+
+        unsigned int temp_sum = 0;
+
+        for(int i = 0 ; i < WINDOW_SIZE ; i++) {
+            if ( prev_range[i] == 0 )
+                temp_sum += temp_range / WINDOW_SIZE;
+            else
+                temp_sum += prev_range[i] / WINDOW_SIZE;
+        }
+
+        range = temp_sum;
+
+        range_valid_flag = 1;
+
+        CCU61_TCTR4.B.T12RES = 0x1; // reset CCU61 T12 Counter
+    }
+
+    if (button_pushed_flag)
+    {
+        if (range > 2 && range <10){ // R
+            P02_OUT.U |= 0x1 << P7_BIT_LSB_IDX;
+            P10_OUT.U &= ~(0x1 << P5_BIT_LSB_IDX);
+            P10_OUT.U &= ~(0x1 << P3_BIT_LSB_IDX);
+        }
+        else if (range >= 10 && range <20){ //Y
+            P02_OUT.U |= 0x1 << P7_BIT_LSB_IDX;
+            P10_OUT.U |= 0x1 << P5_BIT_LSB_IDX;
+            P10_OUT.U &= ~(0x1 << P3_BIT_LSB_IDX);
+        }
+        else { //G
+            P02_OUT.U &= ~(0x1 << P7_BIT_LSB_IDX);
+            P10_OUT.U |= 0x1 << P5_BIT_LSB_IDX;
+            P10_OUT.U &= ~(0x1 << P3_BIT_LSB_IDX);
+        }
+    }
+    else
+    {
+        /*---RGB LED Off---*/
+        P02_OUT.U &= ~(0x1 << P7_BIT_LSB_IDX);
+        P10_OUT.U &= ~(0x1 << P5_BIT_LSB_IDX);
+        P10_OUT.U &= ~(0x1 << P3_BIT_LSB_IDX);
+    }
+
+    /*
     // USonic Range
 
     if( (P00_IN.U & (0x1 << P4_BIT_LSB_IDX)) != 0 ) // rising edge of echo
@@ -163,6 +263,7 @@ void ERU0_ISR(void)
 
         CCU61_TCTR4.B.T12RES = 0x1;
     }
+    */
 }
 
 __interrupt(0x0B) __vector_table(0)
@@ -178,6 +279,8 @@ void ERU2_ISR(void)
 {
     // SW1 interrupt
     P10_OUT.U ^= 0x1 << P2_BIT_LSB_IDX;
+
+    button_pushed_flag ^= 0x1;
 }
 
 int core0_main(void)
@@ -216,42 +319,110 @@ int core0_main(void)
 
     while(1)
     {
+        X:
+           if(button_pushed_flag == 1)
+           {
+               // sonic sensor on
+               for(unsigned int i = 0; i<10000000; i++);
+               usonicTrigger();
+
+               int x = 0;
+
+               // Play sound
+               //for (int x = 0 ; song[x-1] ; x++)
+               while(song[x/3])
+               {
+                   x++;
+
+                   GTM_TOM0_CH11_SR0.U = song[x/3]; // Buzzer Period
+
+                   for (int y = 0 ; y < (1000000 * 3); y++);
+
+                   VADC_startConversion();
+                   adcResult = VADC_readResult();
+
+                   GTM_TOM0_CH11_SR1.U = (adcResult / 4) / ((x % 3) + 1); // Buzzer Duty
+
+                   usonicTrigger();
+
+                   if(button_pushed_flag != 1){
+                       goto X;
+                   }
+               }
+
+               while(range_valid_flag == 0);
+           }
+           else
+           {
+               VADC_startConversion();
+               adcResult = VADC_readResult();
+
+               // Stop Sound and Off LED
+               GTM_TOM0_CH11_SR0.U = 0; // Buzzer Period
+               GTM_TOM0_CH1_SR1.U = adcResult * 4; // Red LED
+
+               P02_OUT.U &= ~(0x1 << P7_BIT_LSB_IDX);
+               P10_OUT.U &= ~(0x1 << P5_BIT_LSB_IDX);
+               P10_OUT.U &= ~(0x1 << P3_BIT_LSB_IDX);
+           }
+
+        /*
         VADC_startConversion();
         adcResult = VADC_readResult();
 
-        GTM_TOM0_CH1_SR1.U = adcResult * 4; // Red LED
         GTM_TOM0_CH11_SR1.U = adcResult * 4; // Buzzer Duty
-        //GTM_TOM0_CH11_SR0.U = adcResult * 4; // Buzzer Period
+        if(button_pushed_flag == 1)
+        {
+            for(unsigned int i = 0; i<10000000; i++);
+            usonicTrigger();
 
-        for(unsigned int i = 0; i<10000000; i++);
-        usonicTrigger();
-        while(range_valid_flag == 0);
+            while(range_valid_flag == 0);
+            if(range >= 60) // Red
+            {
+               P02_OUT.U |= 0x1 << P7_BIT_LSB_IDX;
+               P10_OUT.U &= ~(0x1 << P5_BIT_LSB_IDX);
+               P10_OUT.U &= ~(0x1 << P3_BIT_LSB_IDX);
+            }
+            else if(range >= 40) // Green
+            {
+                P02_OUT.U &= ~(0x1 << P7_BIT_LSB_IDX);
+                P10_OUT.U |= 0x1 << P5_BIT_LSB_IDX;
+                P10_OUT.U &= ~(0x1 << P3_BIT_LSB_IDX);
+            }
+            else if(range >= 20) // Blue
+            {
+                P02_OUT.U &= ~(0x1 << P7_BIT_LSB_IDX);
+                P10_OUT.U &= ~(0x1 << P5_BIT_LSB_IDX);
+                P10_OUT.U |= 0x1 << P3_BIT_LSB_IDX;
+            }
+            else
+            {
+                P02_OUT.U &= ~(0x1 << P7_BIT_LSB_IDX);
+                P10_OUT.U &= ~(0x1 << P5_BIT_LSB_IDX);
+                P10_OUT.U &= ~(0x1 << P3_BIT_LSB_IDX);
+            }
 
-        if(range >= 60) // Red
-        {
-           P02_OUT.U |= 0x1 << P7_BIT_LSB_IDX;
-           P10_OUT.U &= ~(0x1 << P5_BIT_LSB_IDX);
-           P10_OUT.U &= ~(0x1 << P3_BIT_LSB_IDX);
-        }
-        else if(range >= 40) // Green
-        {
-            P02_OUT.U &= ~(0x1 << P7_BIT_LSB_IDX);
-            P10_OUT.U |= 0x1 << P5_BIT_LSB_IDX;
-            P10_OUT.U &= ~(0x1 << P3_BIT_LSB_IDX);
-        }
-        else if(range >= 20) // Green
-        {
-            P02_OUT.U &= ~(0x1 << P7_BIT_LSB_IDX);
-            P10_OUT.U &= ~(0x1 << P5_BIT_LSB_IDX);
-            P10_OUT.U |= 0x1 << P3_BIT_LSB_IDX;
+            for(int x = 0; song[x-1] ; x++)
+            {
+                if(button_pushed_flag !=0)
+                {
+                    GTM_TOM0_CH11_SR0.U = song[x];
+                    for (int i = 0; i < 10000000 ; i++);
+                }
+            }
         }
         else
         {
-            P02_OUT.U |= 0x1 << P7_BIT_LSB_IDX;
-            P10_OUT.U |= 0x1 << P5_BIT_LSB_IDX;
-            P10_OUT.U |= 0x1 << P3_BIT_LSB_IDX;
-        }
+            // Stop Sound and Off LED
+            GTM_TOM0_CH11_SR0.U = 0; // Buzzer Period
 
+            P02_OUT.U &= ~(0x1 << P7_BIT_LSB_IDX);
+            P10_OUT.U &= ~(0x1 << P5_BIT_LSB_IDX);
+            P10_OUT.U &= ~(0x1 << P3_BIT_LSB_IDX);
+
+            GTM_TOM0_CH1_SR1.U = adcResult * 4; // Red LED
+        }
+        */
     }
 
     return (1);
@@ -534,9 +705,6 @@ void usonicTrigger(void)
 
     CCU60_TCTR4.U |= 0x1 << T12RS_BIT_LSB_IDX; // T12 start counting
 }
-
-
-
 
 void initGTM_Buzzer(void)
 {
