@@ -330,53 +330,51 @@ int core0_main(void)
 
     while(1)
     {
-        X:
-           if(button_pushed_flag == 1)
+       if(button_pushed_flag == 1)
+       {
+           // sonic sensor on
+           for(unsigned int i = 0; i<10000000; i++);
+           usonicTrigger();
+
+           int x = 0;
+
+           // Play sound
+           //for (int x = 0 ; song[x-1] ; x++)
+           while(song[x/3])
            {
-               // sonic sensor on
-               for(unsigned int i = 0; i<10000000; i++);
-               usonicTrigger();
+               x++;
 
-               int x = 0;
+               GTM_TOM0_CH11_SR0.U = song[x/3]; // Buzzer Period
 
-               // Play sound
-               //for (int x = 0 ; song[x-1] ; x++)
-               while(song[x/3])
-               {
-                   x++;
+               for (int y = 0 ; y < (1000000 * 3); y++);
 
-                   GTM_TOM0_CH11_SR0.U = song[x/3]; // Buzzer Period
-
-                   for (int y = 0 ; y < (1000000 * 3); y++);
-
-                   VADC_startConversion();
-                   adcResult = VADC_readResult();
-
-                   GTM_TOM0_CH11_SR1.U = (adcResult / 4) / ((x % 3) + 1); // Buzzer Duty
-                   GTM_TOM0_CH1_SR1.U = adcResult * 4; // Red LED
-
-                   usonicTrigger();
-
-                   if(button_pushed_flag != 1){
-                       goto X;
-                   }
-               }
-
-               while(range_valid_flag == 0);
-           }
-           else
-           {
                VADC_startConversion();
                adcResult = VADC_readResult();
 
-               // Stop Sound and Off LED
-               GTM_TOM0_CH11_SR0.U = 0; // Buzzer Period
+               GTM_TOM0_CH11_SR1.U = (adcResult / 4) / ((x % 3) + 1); // Buzzer Duty
                GTM_TOM0_CH1_SR1.U = adcResult * 4; // Red LED
 
-               P02_OUT.U &= ~(0x1 << P7_BIT_LSB_IDX);
-               P10_OUT.U &= ~(0x1 << P5_BIT_LSB_IDX);
-               P10_OUT.U &= ~(0x1 << P3_BIT_LSB_IDX);
+               usonicTrigger();
+
+               if(button_pushed_flag != 1)
+                   break;
            }
+
+           while(range_valid_flag == 0);
+       }
+       else
+       {
+           VADC_startConversion();
+           adcResult = VADC_readResult();
+
+           // Stop Sound and Off LED
+           GTM_TOM0_CH11_SR0.U = 0; // Buzzer Period
+           GTM_TOM0_CH1_SR1.U = adcResult * 4; // Red LED
+
+           P02_OUT.U &= ~(0x1 << P7_BIT_LSB_IDX);
+           P10_OUT.U &= ~(0x1 << P5_BIT_LSB_IDX);
+           P10_OUT.U &= ~(0x1 << P3_BIT_LSB_IDX);
+       }
 
         /*
         VADC_startConversion();
